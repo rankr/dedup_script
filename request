@@ -1,0 +1,34 @@
+select personal repo
+who use the popular repo(config)
+same type 
+
+radiation from the 26 repos, to see little repos who use them
+
+see some repo/library who duplicated most
+
+fork repos, the popular repo may not so representative
+
+paper rate that remove fork
+
+1. get more repos, including fork, random small repos
+2. classify the repos, and judge what will duplicated
+
+zlib, protobuf which are most referenced
+
+
+
+*** 知名项目自己编码比较多，但是个人的、小型的项目可能会借鉴知名项目
+
+拿一些随机的项目做实验，把他们与知名项目的文件作对比，看看有哪些相同的，比例如何，有哪些
+
+*** 有什么常被引用的项目？
+protobuf, zlib, 怎么分辨出来， 哪些项目会使用他们
+
+*** 了解到什么程度？拿来一个项目，你能说出大概有什么文件，冗余可能有哪些，那些其他项目可能和他冗余得多
+
+为项目进行分类？ 每个类别都会有对应的出现频率高的文件、作为基准的知名项目？
+
+*** config文件是否能能提供更多的信息
+token: ab55cbb6865417b0adbbea454598b2883034747e
+
+*** 直观来看的话，随机选择的项目都很小，文件很少
