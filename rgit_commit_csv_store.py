@@ -26,7 +26,7 @@ class INDEX_AND_NEW:
 		self.set = set
 
 def commitFromPack(idxPath, packPath):
-	f_idx = open(idxPath, 'rb')
+	f_idx = open(idxPath, 'rb') 
 	f_idx.seek(4*257)
 
 	#I dnt know if it's little endian
@@ -232,7 +232,18 @@ def parse_commit(raw_data):
 	ret.msg = '\n'.join(raw_list[cnt+2:])
 	return ret
 
-
+def int2msb(a):
+	#little endian
+	s = ''
+	while True:
+		b = a & 0x7f
+		a = a >> 7
+		if a:
+			s += chr(b&0x80)
+		else:
+			s += chr(b)
+			break
+	return s
 
 def rgit_commit_csv_store(git_repo_path, commit_store_path):
 	'''
@@ -242,13 +253,11 @@ def rgit_commit_csv_store(git_repo_path, commit_store_path):
 	if 'to_write' not in csv_files:
 		new_file_path = os.path.join(commit_store_path, 'to_write')
 		w = open(new_file_path, 'w')
-		w.write('0,0') #which number of csv to write, and how many it has had, and offset it will begin
+		w.write('0,0,0') #which number of csv to write, and how many it has had, and offset it will begin
 		w.close()
 	if 'rgit_commit_main.csv' not in csv_files:
-		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0.csv')
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0')
 		w = open(new_file_path, 'w')
-		w.write(','.join(['tree','parent1','parent2',\
-			'author','author_time','committer','committer_time','msg\n']))
 		w.close()
 	if 'rgit_commit_hash8.csv' not in csv_files:
 		new_file_path = os.path.join(commit_store_path, 'rgit_commit_hash8.csv')
@@ -265,6 +274,7 @@ def rgit_commit_csv_store(git_repo_path, commit_store_path):
 	a = f.readline().split(',')
 	which = int(a[0])
 	already_store = int(a[1])
+	offset = int(a[2])
 	f.close()
 
 	f = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'))
@@ -279,34 +289,15 @@ def rgit_commit_csv_store(git_repo_path, commit_store_path):
 	f.close()
 	hash8_file = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'), 'a')
 
-	#暂且定为每个5万条commit
-	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which), '.csv']), 'a')
+	#for now 50000 commit per rgit_commit_main file
+	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which)]), 'a')
 	h = {}
+	test_cmpr = []
 	for sha, raw_data in ret:
 		parsed_commit = parse_commit(raw_data)
-		'''
-		print parsed_commit.tree
-		print parsed_commit.parent1
-		print parsed_commit.parent2
-		print parsed_commit.author
-		print parsed_commit.author_time
-		print parsed_commit.committer
-		print parsed_commit.committer_time
-		print parsed_commit.msg
-		print '\n\n\n'
-		c = 'tree %s\nparent %s\n'%(parsed_commit.tree, parsed_commit.parent1)
-		if parsed_commit.parent2:
-			c += 'parent %s\n'%(parsed_commit.parent2)
-		c += ''
-		c += 'author %s %s\ncommitter %s %s\n%s'%(parsed_commit.author, parsed_commit.author_time,\
-		parsed_commit.committer, parsed_commit.committer_time, parsed_commit.msg)
-		print hashlib.sha1('commit %d\0%s'%(len(c), c)).hexdigest()
-		print sha (those two are same, good work)
-		return 0
-		'''
 
-		if sha[0:3] not in h:#format: sha,which,line_number
-			indexpath = ''.join(['index', sha[0:3]])
+		if sha[0:2] not in h:#format: sha,which,line_number
+			indexpath = ''.join(['index', sha[0:2]])
 			if indexpath not in csv_files:
 				temp = set()
 				f = open(os.path.join(commit_store_path, indexpath), 'w')
@@ -323,11 +314,11 @@ def rgit_commit_csv_store(git_repo_path, commit_store_path):
 				f.close()
 
 			f = open(os.path.join(commit_store_path, indexpath), 'a')
-			h[sha[0:3]] = INDEX_AND_NEW(file = f, set = temp)
-		if sha in h[sha[0:3]].set:#already exists
+			h[sha[0:2]] = INDEX_AND_NEW(file = f, set = temp)
+		if sha[2:] in h[sha[0:2]].set:#already exists
 			continue
-		h[sha[0:3]].file.write('%s,%d,%d\n'%(sha, which, already_store))
-		h[sha[0:3]].set.add(sha)
+		h[sha[0:2]].file.write('%s,%d,%d\n'%(sha[2:], which, already_store))
+		h[sha[0:2]].set.add(sha[2:])
 
 		md51 = hashlib.md5(parsed_commit.author).hexdigest()[0:8]
 		temp = 0
@@ -359,22 +350,490 @@ def rgit_commit_csv_store(git_repo_path, commit_store_path):
 		write_str = "%s,%s,%s,%s,%s,%s,%s,%s\n"%(\
 			parsed_commit.tree, parsed_commit.parent1, parsed_commit.parent2,\
 			j1, parsed_commit.author_time, j2,\
-			parsed_commit.committer_time, zlib.compress(parsed_commit.msg))
-		w.write(write_str)
+			parsed_commit.committer_time, parsed_commit.msg)
+		write_str = zlib.compress(write_str)
+		
+		head = int2msb(len(write_str))
+		content = ''.join([head, write_str])
+		
+		w.write(content)
 		already_store += 1
+		offset += len(content)
 		if already_store == NUM_PER_MAIN_COMMIT:
 			already_store = 0
 			which += 1
+			offset = 0
 			w.close()
-			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d.csv'%(which))
+			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d'%(which))
 			w = open(new_file_path, 'w')
-			w.write(','.join['tree','parent1','parent2',\
-				'author','author_time','committer','committer_time','msg\n'])
 	f = open(os.path.join(commit_store_path, 'to_write'), 'w')
-	f.write("%d,%d"%(which, already_store))
+	f.write("%d,%d,%d"%(which, already_store, offset))
 	f.close()
 	hash8_file.close()
 	for i in h:
 		h[i].file.close()
 	w.close()
 	return 1
+
+
+def rgit_commit_csv_store_cmt_dup(git_repo_path, commit_store_path):
+	'''
+	a version of rgit_commit_csv_store without the deduplication of the same commit
+	store commit objects from git_repo_path, to csv files in commit_store_path
+	'''
+	csv_files = os.listdir(commit_store_path)
+	if 'to_write' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'to_write')
+		w = open(new_file_path, 'w')
+		w.write('0,0,0') #which number of csv to write, and how many it has had, and offset it will begin
+		w.close()
+	if 'rgit_commit_main' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0')
+		w = open(new_file_path, 'w')
+		w.close()
+	if 'rgit_commit_hash8.csv' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_hash8.csv')
+		w = open(new_file_path, 'w')
+		w.write(','.join(['hash8+1','name_email_str\n']))
+		w.close()
+
+	idx_pack_pairs = idx_pack_from_repo(git_repo_path)
+	ret = []
+	for i, j in idx_pack_pairs:
+		ret.extend(commitFromPack(i, j))
+
+	f = open(os.path.join(commit_store_path, 'to_write'))
+	a = f.readline().split(',')
+	which = int(a[0])
+	already_store = int(a[1])
+	offset = int(a[2])
+	f.close()
+
+	f = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'))
+	a = f.readline()
+	hash8  = {}
+	while True:
+		a = f.readline()
+		if not a:
+			break
+		a = a.strip().split(',')
+		hash8[a[0]] = a[1]
+	f.close()
+	hash8_file = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'), 'a')
+
+	#暂且定为每个5万条commit
+	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which)]), 'a')
+	h = {}
+	test_cmpr = []
+	for sha, raw_data in ret:
+		parsed_commit = parse_commit(raw_data)
+
+		if sha[0:2] not in h:#format: sha,which,line_number
+			indexpath = ''.join(['index', sha[0:2]])
+			if indexpath not in csv_files:
+				temp = set()
+				f = open(os.path.join(commit_store_path, indexpath), 'w')
+				f.close()
+			else:
+				f = open(os.path.join(commit_store_path, indexpath))
+				temp  = set()
+				while True:
+					a = f.readline()
+					if not a:
+						break
+					a = a.strip().split(',')
+					temp.add(a[0])
+				f.close()
+
+			f = open(os.path.join(commit_store_path, indexpath), 'a')
+			h[sha[0:2]] = INDEX_AND_NEW(file = f, set = temp)
+		#if sha[2:] in h[sha[0:2]].set:#already exists
+		#	continue
+		h[sha[0:2]].file.write('%s,%d,%d\n'%(sha[2:], which, already_store))
+		h[sha[0:2]].set.add(sha[2:])
+
+		md51 = hashlib.md5(parsed_commit.author).hexdigest()[0:8]
+		temp = 0
+		j1 = 0
+		j2 = 0
+		while True:
+			j1 = md51 + str(temp) 
+			if j1 in hash8:
+				if hash8[j1] == parsed_commit.author:
+					break
+			else:
+				hash8[j1] = parsed_commit.author
+				hash8_file.write("%s,%s\n"%(j1, parsed_commit.author))
+				break
+			temp += 1
+
+		md52 = hashlib.md5(parsed_commit.committer).hexdigest()[0:8]
+		temp = 0
+		while True:
+			j2 = md52 + str(temp) 
+			if j2 in hash8:
+				if hash8[j2] == parsed_commit.committer:
+					break
+			else:
+				hash8[j2] = parsed_commit.committer
+				hash8_file.write("%s,%s\n"%(j2, parsed_commit.committer))
+				break
+			temp += 1
+		write_str = "%s,%s,%s,%s,%s,%s,%s,%s\n"%(\
+			parsed_commit.tree, parsed_commit.parent1, parsed_commit.parent2,\
+			j1, parsed_commit.author_time, j2,\
+			parsed_commit.committer_time, parsed_commit.msg)
+		write_str = zlib.compress(write_str)
+		
+		head = int2msb(len(write_str))
+		content = ''.join([head, write_str])
+		
+		w.write(content)
+		already_store += 1
+		offset += len(content)
+		if already_store == NUM_PER_MAIN_COMMIT:
+			already_store = 0
+			which += 1
+			offset = 0
+			w.close()
+			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d'%(which))
+			w = open(new_file_path, 'w')
+	f = open(os.path.join(commit_store_path, 'to_write'), 'w')
+	f.write("%d,%d,%d"%(which, already_store, offset))
+	f.close()
+	hash8_file.close()
+	for i in h:
+		h[i].file.close()
+	w.close()
+	return 1
+
+def rgit_commit_csv_store_struc_dup(git_repo_path, commit_store_path):
+	'''
+	a version of rgit_commit_csv_store without the deduplication of structure string like 'tree','author'
+	store commit objects from git_repo_path, to csv files in commit_store_path
+	'''
+	csv_files = os.listdir(commit_store_path)
+	if 'to_write' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'to_write')
+		w = open(new_file_path, 'w')
+		w.write('0,0,0') #which number of csv to write, and how many it has had, and offset it will begin
+		w.close()
+	if 'rgit_commit_main.csv' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0')
+		w = open(new_file_path, 'w')
+		w.close()
+	if 'rgit_commit_hash8.csv' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_hash8.csv')
+		w = open(new_file_path, 'w')
+		w.write(','.join(['hash8+1','name_email_str\n']))
+		w.close()
+
+	idx_pack_pairs = idx_pack_from_repo(git_repo_path)
+	ret = []
+	for i, j in idx_pack_pairs:
+		ret.extend(commitFromPack(i, j))
+
+	f = open(os.path.join(commit_store_path, 'to_write'))
+	a = f.readline().split(',')
+	which = int(a[0])
+	already_store = int(a[1])
+	offset = int(a[2])
+	f.close()
+
+	f = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'))
+	a = f.readline()
+	hash8  = {}
+	while True:
+		a = f.readline()
+		if not a:
+			break
+		a = a.strip().split(',')
+		hash8[a[0]] = a[1]
+	f.close()
+	hash8_file = open(os.path.join(commit_store_path, 'rgit_commit_hash8.csv'), 'a')
+
+	#暂且定为每个5万条commit
+	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which)]), 'a')
+	h = {}
+	test_cmpr = []
+	for sha, raw_data in ret:
+		parsed_commit = parse_commit(raw_data)
+
+		if sha[0:2] not in h:#format: sha,which,line_number
+			indexpath = ''.join(['index', sha[0:2]])
+			if indexpath not in csv_files:
+				temp = set()
+				f = open(os.path.join(commit_store_path, indexpath), 'w')
+				f.close()
+			else:
+				f = open(os.path.join(commit_store_path, indexpath))
+				temp  = set()
+				while True:
+					a = f.readline()
+					if not a:
+						break
+					a = a.strip().split(',')
+					temp.add(a[0])
+				f.close()
+
+			f = open(os.path.join(commit_store_path, indexpath), 'a')
+			h[sha[0:2]] = INDEX_AND_NEW(file = f, set = temp)
+		if sha[2:] in h[sha[0:2]].set:#already exists
+			continue
+		h[sha[0:2]].file.write('%s,%d,%d\n'%(sha[2:], which, already_store))
+		h[sha[0:2]].set.add(sha[2:])
+
+		md51 = hashlib.md5(parsed_commit.author).hexdigest()[0:8]
+		temp = 0
+		j1 = 0
+		j2 = 0
+		while True:
+			j1 = md51 + str(temp) 
+			if j1 in hash8:
+				if hash8[j1] == parsed_commit.author:
+					break
+			else:
+				hash8[j1] = parsed_commit.author
+				hash8_file.write("%s,%s\n"%(j1, parsed_commit.author))
+				break
+			temp += 1
+
+		md52 = hashlib.md5(parsed_commit.committer).hexdigest()[0:8]
+		temp = 0
+		while True:
+			j2 = md52 + str(temp) 
+			if j2 in hash8:
+				if hash8[j2] == parsed_commit.committer:
+					break
+			else:
+				hash8[j2] = parsed_commit.committer
+				hash8_file.write("%s,%s\n"%(j2, parsed_commit.committer))
+				break
+			temp += 1
+		write_str = "tree %s,parent %s,parent %s,%s,%s,%s,%s,%s\n"%(\
+			parsed_commit.tree, parsed_commit.parent1, parsed_commit.parent2,\
+			j1, parsed_commit.author_time, j2,\
+			parsed_commit.committer_time, parsed_commit.msg)
+			
+		write_str = zlib.compress(write_str)
+		
+		head = int2msb(len(write_str))
+		content = ''.join([head, write_str])
+		
+		w.write(content)
+		already_store += 1
+		offset += len(content)
+		if already_store == NUM_PER_MAIN_COMMIT:
+			already_store = 0
+			which += 1
+			offset = 0
+			w.close()
+			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d'%(which))
+			w = open(new_file_path, 'w')
+	f = open(os.path.join(commit_store_path, 'to_write'), 'w')
+	f.write("%d,%d,%d"%(which, already_store, offset))
+	f.close()
+	hash8_file.close()
+	for i in h:
+		h[i].file.close()
+	w.close()
+	return 1
+
+def rgit_commit_csv_store_developer_dup(git_repo_path, commit_store_path):
+
+	'''
+	a version of rgit_commit_csv_store without the deduplication of developer msgs
+	store commit objects from git_repo_path, to csv files in commit_store_path
+	'''
+	csv_files = os.listdir(commit_store_path)
+	if 'to_write' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'to_write')
+		w = open(new_file_path, 'w')
+		w.write('0,0,0') #which number of csv to write, and how many it has had, and offset it will begin
+		w.close()
+	if 'rgit_commit_main.csv' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0')
+		w = open(new_file_path, 'w')
+		w.close()
+
+	idx_pack_pairs = idx_pack_from_repo(git_repo_path)
+	ret = []
+	for i, j in idx_pack_pairs:
+		ret.extend(commitFromPack(i, j))
+
+	f = open(os.path.join(commit_store_path, 'to_write'))
+	a = f.readline().split(',')
+	which = int(a[0])
+	already_store = int(a[1])
+	offset = int(a[2])
+	f.close()
+
+	#暂且定为每个5万条commit
+	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which)]), 'a')
+	h = {}
+	test_cmpr = []
+	for sha, raw_data in ret:
+		parsed_commit = parse_commit(raw_data)
+
+		if sha[0:2] not in h:#format: sha,which,line_number
+			indexpath = ''.join(['index', sha[0:2]])
+			if indexpath not in csv_files:
+				temp = set()
+				f = open(os.path.join(commit_store_path, indexpath), 'w')
+				f.close()
+			else:
+				f = open(os.path.join(commit_store_path, indexpath))
+				temp  = set()
+				while True:
+					a = f.readline()
+					if not a:
+						break
+					a = a.strip().split(',')
+					temp.add(a[0])
+				f.close()
+
+			f = open(os.path.join(commit_store_path, indexpath), 'a')
+			h[sha[0:2]] = INDEX_AND_NEW(file = f, set = temp)
+		if sha[2:] in h[sha[0:2]].set:#already exists
+			continue
+		h[sha[0:2]].file.write('%s,%d,%d\n'%(sha[2:], which, already_store))
+		h[sha[0:2]].set.add(sha[2:])
+
+		write_str = "%s,%s,%s,%s,%s,%s,%s,%s\n"%(\
+			parsed_commit.tree, parsed_commit.parent1, parsed_commit.parent2,\
+			parsed_commit.author, parsed_commit.author_time, parsed_commit.committer,\
+			parsed_commit.committer_time, parsed_commit.msg)
+		write_str = zlib.compress(write_str)
+		
+		head = int2msb(len(write_str))
+		content = ''.join([head, write_str])
+		
+		w.write(content)
+		already_store += 1
+		offset += len(content)
+		if already_store == NUM_PER_MAIN_COMMIT:
+			already_store = 0
+			which += 1
+			offset = 0
+			w.close()
+			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d'%(which))
+			w = open(new_file_path, 'w')
+	f = open(os.path.join(commit_store_path, 'to_write'), 'w')
+	f.write("%d,%d,%d"%(which, already_store, offset))
+	f.close()
+	for i in h:
+		h[i].file.close()
+	w.close()
+	return 1
+
+def rgit_commit_csv_store_all_dup(git_repo_path, commit_store_path):
+
+	'''
+	a version of rgit_commit_csv_store without the deduplication of developer msgs
+	store commit objects from git_repo_path, to csv files in commit_store_path
+	'''
+	csv_files = os.listdir(commit_store_path)
+	if 'to_write' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'to_write')
+		w = open(new_file_path, 'w')
+		w.write('0,0,0') #which number of csv to write, and how many it has had, and offset it will begin
+		w.close()
+	if 'rgit_commit_main.csv' not in csv_files:
+		new_file_path = os.path.join(commit_store_path, 'rgit_commit_main0')
+		w = open(new_file_path, 'w')
+		w.close()
+
+	idx_pack_pairs = idx_pack_from_repo(git_repo_path)
+	ret = []
+	for i, j in idx_pack_pairs:
+		ret.extend(commitFromPack(i, j))
+
+	f = open(os.path.join(commit_store_path, 'to_write'))
+	a = f.readline().split(',')
+	which = int(a[0])
+	already_store = int(a[1])
+	offset = int(a[2])
+	f.close()
+
+	#暂且定为每个5万条commit
+	w = open(''.join([commit_store_path, '/rgit_commit_main', str(which)]), 'a')
+	h = {}
+	test_cmpr = []
+	for sha, raw_data in ret:
+		parsed_commit = parse_commit(raw_data)
+
+		if sha[0:2] not in h:#format: sha,which,line_number
+			indexpath = ''.join(['index', sha[0:2]])
+			if indexpath not in csv_files:
+				temp = set()
+				f = open(os.path.join(commit_store_path, indexpath), 'w')
+				f.close()
+			else:
+				f = open(os.path.join(commit_store_path, indexpath))
+				temp  = set()
+				while True:
+					a = f.readline()
+					if not a:
+						break
+					a = a.strip().split(',')
+					temp.add(a[0])
+				f.close()
+
+			f = open(os.path.join(commit_store_path, indexpath), 'a')
+			h[sha[0:2]] = INDEX_AND_NEW(file = f, set = temp)
+		#if sha[2:] in h[sha[0:2]].set:#already exists
+		#	continue
+		h[sha[0:2]].file.write('%s,%d,%d\n'%(sha[2:], which, already_store))
+		h[sha[0:2]].set.add(sha[2:])
+
+		write_str = "tree %s,parent %s,parent %s,%s,%s,%s,%s,%s\n"%(\
+			parsed_commit.tree, parsed_commit.parent1, parsed_commit.parent2,\
+			parsed_commit.author, parsed_commit.author_time, parsed_commit.committer,\
+			parsed_commit.committer_time, parsed_commit.msg)
+		write_str = zlib.compress(write_str)
+		
+		head = int2msb(len(write_str))
+		content = ''.join([head, write_str])
+		
+		w.write(content)
+		already_store += 1
+		offset += len(content)
+		if already_store == NUM_PER_MAIN_COMMIT:
+			already_store = 0
+			which += 1
+			offset = 0
+			w.close()
+			new_file_path = os.path.join(commit_store_path, 'rgit_commit_main%d'%(which))
+			w = open(new_file_path, 'w')
+	f = open(os.path.join(commit_store_path, 'to_write'), 'w')
+	f.write("%d,%d,%d"%(which, already_store, offset))
+	f.close()
+	for i in h:
+		h[i].file.close()
+	w.close()
+	return 1
+
+
+def commit_csv_store_rate(csv_file_list, commit_store_path):
+	after = dirSize(commit_store_path)
+	before = 0
+	no_cmpr = 0
+	for i in csv_file_list:
+		f = open(i)
+		a = f.readline()
+		while True:
+			a = f.readline()
+			if not a:
+				break
+			a = a.strip().split(',')
+			t = a[1]
+			if t!='commit':
+				continue
+			r = int(a[5])
+			p = int(a[4])
+			if r!=-1:
+				before += r
+			else:
+				before += p
+			no_cmpr += p
+	return after,before,no_cmpr
